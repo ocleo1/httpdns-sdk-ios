@@ -102,6 +102,40 @@
     }
 }
 
+- (void)startCheckWithRetry:(float)timeOut DnsId:(int)dnsId DnsKey:(NSString *)dnsKey encryptType:(NSInteger)encryptType
+{
+    MSDKDNSLOG(@"%@, MSDKDns startCheckWithRetry", self.toCheckDomains);
+
+    //无网络直接返回
+    if (![[MSDKDnsNetworkManager shareInstance] networkAvailable]) {
+        MSDKDNSLOG(@"No network,please check your network setting!");
+        [self callNotify];
+        return;
+    }
+
+    if (_netStack == msdkdns::MSDKDNS_ELocalIPStack_None) {
+        MSDKDNSLOG(@"No network stack, please check your network setting!");
+        [self callNotify];
+        return;
+    }
+
+    if (_netStack != msdkdns::MSDKDNS_ELocalIPStack_IPv4) {
+        for(int i = 0; i < 3; i++) {
+            dispatch_async([MSDKDnsInfoTool msdkdns_retry_queue], ^{
+                [self startHttpDns_4A:timeOut DnsId:dnsId DnsKey:dnsKey encryptType:encryptType];
+            });
+        }
+    }
+
+    if (_netStack != msdkdns::MSDKDNS_ELocalIPStack_IPv6) {
+        for(int i = 0; i < 3; i++) {
+            dispatch_async([MSDKDnsInfoTool msdkdns_retry_queue], ^{
+                [self startHttpDns:timeOut DnsId:dnsId DnsKey:dnsKey encryptType:encryptType];
+            });
+        }
+    }
+}
+
 //进行httpdns请求
 - (void)startHttpDns:(float)timeOut DnsId:(int)dnsId DnsKey:(NSString *)dnsKey
 {
@@ -155,6 +189,17 @@
         NSDictionary * info = @{kDnsErrCode:MSDKDns_Fail, kDnsErrMsg:@"", kDnsRetry:@"0"};
         [self callBack:resolver Info:info];
     });
+
+    // httpdns 失败，进行重试
+    if (resolver && (resolver == self.httpDnsResolver_A || resolver == self.httpDnsResolver_4A)) {
+        dispatch_async([MSDKDnsInfoTool msdkdns_resolver_queue], ^{
+            float timeOut = [[MSDKDnsParamsManager shareInstance] msdkDnsGetMTimeOut];
+            int dnsId = [[MSDKDnsParamsManager shareInstance] msdkDnsGetMDnsId];
+            NSString *dnsKey = [[MSDKDnsParamsManager shareInstance] msdkDnsGetMDnsKey];
+            NSInteger encryptType = [[MSDKDnsParamsManager shareInstance] msdkDnsGetEncryptType];
+            [self startCheckWithRetry:timeOut DnsId:dnsId DnsKey:dnsKey encryptType:encryptType];
+        });
+    }
 }
 
 #pragma mark - CallBack
